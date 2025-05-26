@@ -46,12 +46,42 @@ contract MiniDex is Ownable, ReentrancyGuard {
         return a < b ? a : b;
     }
 
-    function addLiquidity(uint256 amountA, uint256 amountB) external nonReentrant {
-        require(amountA > 0 && amountB > 0, "Invalid amounts");
+    function addLiquidity(
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin
+        ) external nonReentrant {
+        require(amountADesired > 0 && amountBDesired > 0, "Invalid amounts");
 
+        uint256 amountA;
+        uint256 amountB;
+
+        if (reserveA == 0 && reserveB == 0) {
+            // Первый провайдер — можно как есть
+            amountA = amountADesired;
+            amountB = amountBDesired;
+        } else {
+            // Расчёт идеального соотношения
+            uint256 amountBOptimal = (amountADesired * reserveB) / reserveA;
+            if (amountBOptimal <= amountBDesired) {
+                require(amountBOptimal >= amountBMin, "Insufficient B amount");
+                amountA = amountADesired;
+                amountB = amountBOptimal;
+            } else {
+                uint256 amountAOptimal = (amountBDesired * reserveA) / reserveB;
+                require(amountAOptimal <= amountADesired, "Too much A required");
+                require(amountAOptimal >= amountAMin, "Insufficient A amount");
+                amountA = amountAOptimal;
+                amountB = amountBDesired;
+            }
+        }
+
+        // Перевод токенов
         tokenA.transferFrom(msg.sender, address(this), amountA);
         tokenB.transferFrom(msg.sender, address(this), amountB);
-        
+
+        // Минт LP токенов
         uint256 totalSupplyLP = lpToken.totalSupply();
         uint256 liquidity;
         if (totalSupplyLP == 0) {
@@ -65,36 +95,40 @@ contract MiniDex is Ownable, ReentrancyGuard {
 
         lpToken.mint(msg.sender, liquidity);
 
+        // Обновление резервов
         reserveA += amountA;
         reserveB += amountB;
 
         emit LiquidityAdded(msg.sender, amountA, amountB);
     }
 
+
     // Remove liquidity 
-    function removeLiquidity(uint256 liquidity) external nonReentrant {
+    function removeLiquidity(
+        uint256 liquidity,
+        uint256 amountAMin,
+        uint256 amountBMin
+    ) external nonReentrant {
         require(liquidity > 0, "Invalid liquidity amount");
         require(lpToken.balanceOf(msg.sender) >= liquidity, "Insufficient liquidity");
 
         uint256 totalSupplyLP = lpToken.totalSupply();
 
-        // Calculate the amount of tokenA and tokenB to return
         uint256 amountA = (liquidity * reserveA) / totalSupplyLP;
         uint256 amountB = (liquidity * reserveB) / totalSupplyLP;
 
+        require(amountA >= amountAMin, "Slippage: amountA too low");
+        require(amountB >= amountBMin, "Slippage: amountB too low");
+
         lpToken.burn(msg.sender, liquidity);
 
-        // Update reserves
         reserveA -= amountA;
         reserveB -= amountB;
 
         tokenA.transfer(msg.sender, amountA);
         tokenB.transfer(msg.sender, amountB);
 
-
         emit LiquidityRemoved(msg.sender, amountA, amountB);
-
-
     }
 
     function swap(address tokenIn, uint256 amountIn) external nonReentrant {

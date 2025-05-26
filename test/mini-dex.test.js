@@ -51,48 +51,115 @@ describe("Mini DEX Deployment", function () {
   });
 
   it("AddLiquidity and remove", async function () {
-    const amountA = parseUnits("2000", 18);
-    const amountB = parseUnits("2000", 18);
+    const amountADesired = parseUnits("2000", 18);
+    const amountBDesired = parseUnits("1000", 18);
+    const amountAMin = parseUnits("1980", 18); // ~1% слп
+    const amountBMin = parseUnits("990", 18);
 
-    // Approve dex
-    await clToken.approve(dex.target, amountA);
-    await fakeUSDT.approve(dex.target, amountB);
+    await clToken.approve(dex.target, amountADesired);
+    await fakeUSDT.approve(dex.target, amountBDesired);
 
-    const tx = await dex.addLiquidity(amountA, amountB);
-    await tx.wait();
+    await dex.addLiquidity(amountADesired, amountBDesired, amountAMin, amountBMin);
 
-    const reserveA = await dex.getReserveA();
-    const reserveB = await dex.getReserveB();
+    let reserveA = await dex.getReserveA();
+    let reserveB = await dex.getReserveB();
+    let lpSupply = await lpToken.totalSupply();
 
-    let lpSupply = await lpToken.totalSupply(); 
-
-    expect(reserveA).to.equal(amountA);
-    expect(reserveB).to.equal(amountB);
+    expect(reserveA).to.equal(amountADesired);
+    expect(reserveB).to.equal(amountBDesired);
     expect(lpSupply).to.be.gt(0);
 
-    // Убедись, что LP токены пришли
     const lpBalance = await lpToken.balanceOf(owner.address);
-    console.log("LP balance before remove:", formatUnits(lpBalance,18));
+    console.log("LP balance before remove:", formatUnits(lpBalance, 18));
 
-    // Одобрение MiniDex на сжигание LP токенов
     await lpToken.approve(dex.target, lpBalance);
 
-    const liquidity = parseUnits("1000", 18);
-    const txRemove = await dex.removeLiquidity(liquidity);
-    await txRemove.wait();
+    const liquidity = lpBalance / 2n; 
+    reserveA = await dex.getReserveA(); 
+    reserveB = await dex.getReserveB(); 
+
+    const minAmountA = ((reserveA * liquidity) / lpSupply) * 99n / 100n;
+    const minAmountB = ((reserveB * liquidity) / lpSupply) * 99n / 100n;
+
+    await dex.removeLiquidity(liquidity, minAmountA, minAmountB);
 
     lpSupply = await lpToken.totalSupply();
-    expect(lpSupply).to.equal(parseUnits("3000",18));
-    console.log("LP balance after remove:", formatUnits(await lpToken.balanceOf(owner.address),18));
+    console.log("LP balance after remove:", formatUnits(await lpToken.balanceOf(owner.address), 18));
   });
 
-  // it("RemoveLiquidity", async function() {
-  //     const liquidity = parseUnits("1000", 18);
+  it("двое добавляют ликвидность с допуском проскальзывания", async function () {
+    const amountADesired1 = parseUnits("2000", 18);
+    const amountBDesired1 = parseUnits("1000", 18);
+    const amountAMin1 = parseUnits("1980", 18);
+    const amountBMin1 = parseUnits("990", 18);
 
-  //     const tx = await dex.removeLiquidity(liquidity);
-  //     await tx.wait();
+    await clToken.approve(dex.target, amountADesired1);
+    await fakeUSDT.approve(dex.target, amountBDesired1);
+    await dex.addLiquidity(amountADesired1, amountBDesired1, amountAMin1, amountBMin1);
 
-  //     const lpSupply = await lpToken.totalSupply();
-  //     expect(lpSupply).to.equal(2000);
-  // }); 
+    const amountADesired2 = parseUnits("2000", 18);
+    const amountBDesired2 = parseUnits("1000", 18);
+    const amountAMin2 = parseUnits("1980", 18);
+    const amountBMin2 = parseUnits("990", 18);
+
+    await clToken.transfer(user.address, amountADesired2);
+    await fakeUSDT.transfer(user.address, amountBDesired2);
+
+    await clToken.connect(user).approve(dex.target, amountADesired2);
+    await fakeUSDT.connect(user).approve(dex.target, amountBDesired2);
+    await dex.connect(user).addLiquidity(amountADesired2, amountBDesired2, amountAMin2, amountBMin2);
+
+    const lpBalanceOwner = await lpToken.balanceOf(owner.address);
+    const lpBalanceUser = await lpToken.balanceOf(user.address);
+    console.log("LP owner:", formatUnits(lpBalanceOwner, 18));
+    console.log("LP user:", formatUnits(lpBalanceUser, 18));
+
+    expect(lpBalanceOwner).to.be.gt(0);
+    expect(lpBalanceUser).to.be.gt(0);
+  });
+
+  it("Swap and show change rate", async function() {
+    const amountADesired1 = parseUnits("2000", 18);
+    const amountBDesired1 = parseUnits("1000", 18);
+    const amountAMin1 = parseUnits("1980", 18);
+    const amountBMin1 = parseUnits("990", 18);
+
+    await clToken.approve(dex.target, amountADesired1);
+    await fakeUSDT.approve(dex.target, amountBDesired1);
+    await dex.addLiquidity(amountADesired1, amountBDesired1, amountAMin1, amountBMin1);
+
+    const amountADesired2 = parseUnits("2000", 18);
+    const amountBDesired2 = parseUnits("1000", 18);
+    const amountAMin2 = parseUnits("1980", 18);
+    const amountBMin2 = parseUnits("990", 18);
+
+    await clToken.transfer(user.address, amountADesired2);
+    await fakeUSDT.transfer(user.address, amountBDesired2);
+
+    await clToken.connect(user).approve(dex.target, amountADesired2);
+    await fakeUSDT.connect(user).approve(dex.target, amountBDesired2);
+    await dex.connect(user).addLiquidity(amountADesired2, amountBDesired2, amountAMin2, amountBMin2);
+
+    await clToken.transfer(user.address, amountADesired2);
+    await fakeUSDT.transfer(user.address, amountBDesired2);
+    
+    await clToken.connect(user).approve(dex.target, amountADesired2);
+    await fakeUSDT.connect(user).approve(dex.target, amountBDesired2);
+
+    let clTokenBalance = await clToken.balanceOf(user.address);
+    let FusdtBalance = await fakeUSDT.balanceOf(user.address);
+
+    console.log("CLToken:", formatUnits(clTokenBalance, 18));
+    console.log("FakeUSDT:", formatUnits(FusdtBalance, 18));
+    await dex.connect(user).swap(clToken.target, amountADesired2);
+
+    clTokenBalance = await clToken.balanceOf(user.address);
+    console.log("CLToken:", formatUnits(clTokenBalance, 18));
+
+    FusdtBalance = await fakeUSDT.balanceOf(user.address);
+    console.log("FakeUSDT:", formatUnits(FusdtBalance, 18));
+  });
+
+
+
 });
